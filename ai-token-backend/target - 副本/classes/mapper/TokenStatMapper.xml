@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.aitoken.mapper.TokenStatMapper">
+
+    <!--
+        按日聚合 t_call_log -> t_token_stat
+        以 (stat_date, stat_hour=-1, user_id, channel_id, model_name) 为维度
+        使用 ON DUPLICATE KEY UPDATE 保证幂等
+    -->
+    <insert id="aggregateByDate">
+        INSERT INTO t_token_stat
+            (stat_date, stat_hour, user_id, channel_id, model_name,
+             call_count, success_count, prompt_tokens, completion_tokens,
+             total_tokens, total_cost)
+        SELECT
+            #{statDate}                                                  AS stat_date,
+            -1                                                           AS stat_hour,
+            IFNULL(user_id, 0)                                           AS user_id,
+            IFNULL(channel_id, 0)                                        AS channel_id,
+            IFNULL(model_name, '')                                       AS model_name,
+            COUNT(*)                                                     AS call_count,
+            SUM(CASE WHEN status = 1 THEN 1 ELSE 0 END)                  AS success_count,
+            SUM(prompt_tokens)                                           AS prompt_tokens,
+            SUM(completion_tokens)                                       AS completion_tokens,
+            SUM(total_tokens)                                            AS total_tokens,
+            SUM(cost)                                                    AS total_cost
+        FROM t_call_log
+        WHERE DATE(created_at) = #{statDate}
+        GROUP BY user_id, channel_id, model_name
+        ON DUPLICATE KEY UPDATE
+            call_count         = VALUES(call_count),
+            success_count      = VALUES(success_count),
+            prompt_tokens      = VALUES(prompt_tokens),
+            completion_tokens  = VALUES(completion_tokens),
+            total_tokens       = VALUES(total_tokens),
+            total_cost         = VALUES(total_cost),
+            updated_at         = NOW()
+    </insert>
+
+    <!-- 各模型 Token 占比 (用于饼图) -->
+    <select id="selectModelDistribution" resultType="map">
+        SELECT
+            model_name                  AS modelName,
+            SUM(total_tokens)           AS totalTokens,
+            SUM(total_cost)             AS totalCost
+        FROM t_token_stat
+        WHERE stat_hour = -1
+          AND stat_date >= DATE_SUB(CURDATE(), INTERVAL #{days} DAY)
+          AND model_name != ''
+        GROUP BY model_name
+        ORDER BY totalTokens DESC
+        LIMIT 10
+    </select>
+    <!-- 仅统计组外用户（group_status=0）的模型分布（饼图） -->
+    <select id="selectModelDistributionByOutGroup" resultType="map">
+        SELECT
+            s.model_name                AS modelName,
+            SUM(s.total_tokens)         AS totalTokens,
+            SUM(s.total_cost)           AS totalCost
+        FROM t_token_stat s
+        JOIN t_user u ON s.user_id = u.id AND u.group_status = 0
+        WHERE s.stat_hour = -1
+          AND s.stat_date >= DATE_SUB(CURDATE(), INTERVAL #{days} DAY)
+          AND s.model_name != ''
+        GROUP BY s.model_name
+        ORDER BY totalTokens DESC
+        LIMIT 10
+    </select>
+
+</mapper>

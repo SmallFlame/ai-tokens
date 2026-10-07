@@ -1,0 +1,94 @@
+server:
+  port: 8082
+  servlet:
+    context-path: /
+  # 优雅停机
+  shutdown: graceful
+
+spring:
+  application:
+    name: ai-token-backend
+  lifecycle:
+    timeout-per-shutdown-phase: 30s
+
+  # ── 数据库（值从 .env 环境变量注入）──────────────────────────
+  datasource:
+    url: jdbc:mysql://${DB_HOST:127.0.0.1}:${DB_PORT:3306}/${DB_NAME:ai_token}?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
+    username: ${DB_USERNAME:root}
+    password: ${DB_PASSWORD:}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    hikari:
+      minimum-idle: 5
+      maximum-pool-size: 20
+      connection-timeout: 30000
+      idle-timeout: 600000
+      max-lifetime: 1800000
+
+  # ── Redis ──────────────────────────────────────────────────
+  redis:
+    host:     ${REDIS_HOST:127.0.0.1}
+    port:     ${REDIS_PORT:6379}
+    password: ${REDIS_PASSWORD:}
+    database: 0
+    timeout:  3000ms
+    lettuce:
+      pool:
+        min-idle: 1
+        max-idle: 8
+        max-active: 8
+
+  task:
+    execution:
+      pool:
+        core-size: 4
+        max-size: 16
+        queue-capacity: 200
+      thread-name-prefix: async-task-
+
+  jackson:
+    time-zone: Asia/Shanghai
+    date-format: yyyy-MM-dd HH:mm:ss
+
+mybatis-plus:
+  mapper-locations: classpath:mapper/*.xml
+  type-aliases-package: com.aitoken.entity
+  configuration:
+    map-underscore-to-camel-case: true
+    cache-enabled: false
+    # 生产环境关闭 SQL 日志
+    log-impl: org.apache.ibatis.logging.nologging.NoLoggingImpl
+  global-config:
+    db-config:
+      id-type: auto
+
+sa-token:
+  token-name:    Authorization
+  timeout:       86400
+  active-timeout: -1
+  is-concurrent: true
+  is-share:      false
+  token-style:   uuid
+  is-print:      false
+
+aitoken:
+  aes-key:        ${AES_KEY:AiToken@2026!Key}
+  api-key-prefix: "sk-"
+
+# 生产日志：写文件，关闭控制台彩色输出
+logging:
+  level:
+    com.aitoken: info
+    com.baomidou.mybatisplus: warn
+    # 框架层只记录错误，避免每次启动/请求都刷屏
+    org.springframework: warn
+    org.apache.catalina: warn
+    org.apache.tomcat: warn
+  file:
+    name: /opt/ai-token/logs/ai-token.log
+  logback:
+    rollingpolicy:
+      max-file-size:    50MB
+      max-history:      30
+      file-name-pattern: /opt/ai-token/logs/ai-token.%d{yyyy-MM-dd}.%i.log.gz
+  pattern:
+    file: "%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n"

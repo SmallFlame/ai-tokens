@@ -1,0 +1,53 @@
+[Unit]
+Description=AI Token Backend Service (port %i)
+Documentation=https://github.com/your-org/ai-token
+# 依赖 MySQL 和 Redis，保证它们先启动
+After=network.target mysqld.service redis.service
+Wants=mysqld.service redis.service
+
+[Service]
+Type=simple
+User=ai-token
+Group=ai-token
+
+WorkingDirectory=/opt/ai-token/backend
+
+# %i 为实例名，即端口号（如 8082 / 8083）
+ExecStart=/usr/bin/java \
+    -Xms256m \
+    -Xmx512m \
+    -XX:+UseG1GC \
+    -XX:+HeapDumpOnOutOfMemoryError \
+    -XX:HeapDumpPath=/opt/ai-token/logs/heap-dump-%i.hprof \
+    -Dspring.profiles.active=prod \
+    -Dserver.port=%i \
+    -Dlogging.file.name=/opt/ai-token/logs/ai-token-%i.log \
+    -Dlogging.logback.rollingpolicy.file-name-pattern=/opt/ai-token/logs/ai-token-%i.%%d{yyyy-MM-dd}.%i.log.gz \
+    -Dfile.encoding=UTF-8 \
+    -jar /opt/ai-token/backend/ai-token-backend.jar
+
+# 优雅停机：发送 SIGTERM，Spring Boot 会等待进行中的请求完成
+ExecStop=/bin/kill -SIGTERM $MAINPID
+
+# 崩溃后 10 秒自动重启（正常 stop 不重启）
+Restart=on-failure
+RestartSec=10
+
+# 从 .env 文件注入敏感环境变量（数据库密码等）
+EnvironmentFile=-/opt/ai-token/backend/.env
+
+# 标准输出/错误交给 systemd journal
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=ai-token-%i
+
+# 进程限制
+LimitNOFILE=65536
+LimitNPROC=4096
+
+# 超时设置
+TimeoutStartSec=120
+TimeoutStopSec=60
+
+[Install]
+WantedBy=multi-user.target

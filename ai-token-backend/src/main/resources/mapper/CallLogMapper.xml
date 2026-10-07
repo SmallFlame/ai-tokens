@@ -1,0 +1,122 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.aitoken.mapper.CallLogMapper">
+
+    <!-- 按天聚合最近 N 天的 Token 趋势 -->
+    <select id="selectDailyTrend" resultType="com.aitoken.dto.response.TrendVO">
+        SELECT
+            DATE_FORMAT(created_at, '%Y-%m-%d') AS statDate,
+            COUNT(*)                             AS callCount,
+            SUM(prompt_tokens)                   AS promptTokens,
+            SUM(completion_tokens)               AS completionTokens,
+            SUM(total_tokens)                    AS totalTokens,
+            SUM(cost)                            AS totalCost,
+            SUM(CASE WHEN status = 1 THEN 1 ELSE 0 END) AS successCount
+        FROM t_call_log
+        WHERE created_at >= DATE_SUB(CURDATE(), INTERVAL #{days} DAY)
+        GROUP BY DATE_FORMAT(created_at, '%Y-%m-%d')
+        ORDER BY statDate ASC
+    </select>
+
+    <!-- 按渠道聚合调用统计 -->
+    <select id="selectChannelStat" resultType="com.aitoken.dto.response.ChannelStatVO">
+        SELECT
+            channel_id   AS channelId,
+            channel_name AS channelName,
+            COUNT(*)     AS totalRequests,
+            SUM(CASE WHEN status = 1 THEN 1 ELSE 0 END) AS successRequests,
+            SUM(CASE WHEN status = 0 THEN 1 ELSE 0 END) AS failRequests,
+            IFNULL(SUM(CASE WHEN status = 1 THEN total_tokens ELSE 0 END), 0) AS totalTokens,
+            IFNULL(SUM(CASE WHEN status = 1 THEN cost        ELSE 0 END), 0) AS totalCost,
+            ROUND(AVG(duration_ms)) AS avgDurationMs
+        FROM t_call_log
+        <where>
+            <if test="days == 1">
+                DATE(created_at) = CURDATE()
+            </if>
+            <if test="days > 1">
+                created_at >= DATE_SUB(CURDATE(), INTERVAL #{days} - 1 DAY)
+            </if>
+        </where>
+        GROUP BY channel_id, channel_name
+        ORDER BY totalRequests DESC
+    </select>
+
+    <!-- 按用户聚合调用统计（LEFT JOIN 保留 0 调用的用户） -->
+    <select id="selectUserStat" resultType="com.aitoken.dto.response.UserStatVO">
+        SELECT
+            u.id                                                             AS userId,
+            u.username                                                       AS username,
+            COUNT(l.id)                                                      AS totalRequests,
+            SUM(CASE WHEN l.status = 1 THEN 1 ELSE 0 END)                   AS successRequests,
+            SUM(CASE WHEN l.status = 0 THEN 1 ELSE 0 END)                   AS failRequests,
+            IFNULL(SUM(CASE WHEN l.status = 1 THEN l.total_tokens ELSE 0 END), 0) AS totalTokens,
+            IFNULL(SUM(CASE WHEN l.status = 1 THEN l.cost        ELSE 0 END), 0) AS totalCost,
+            ROUND(AVG(l.duration_ms))                                        AS avgDurationMs
+        FROM t_user u
+        LEFT JOIN t_call_log l
+            ON l.user_id = u.id
+            <if test="days == 1">
+                AND DATE(l.created_at) = CURDATE()
+            </if>
+            <if test="days > 1">
+                AND l.created_at >= DATE_SUB(CURDATE(), INTERVAL #{days} - 1 DAY)
+            </if>
+        WHERE u.deleted = 0
+        GROUP BY u.id, u.username
+        ORDER BY totalTokens DESC, totalRequests DESC
+    </select>
+
+    <!-- 仅统计组外用户（group_status=0）的每日趋势 -->
+    <select id="selectDailyTrendByOutGroup" resultType="com.aitoken.dto.response.TrendVO">
+        SELECT
+            DATE_FORMAT(l.created_at, '%Y-%m-%d') AS statDate,
+            COUNT(*)                               AS callCount,
+            SUM(l.prompt_tokens)                   AS promptTokens,
+            SUM(l.completion_tokens)               AS completionTokens,
+            SUM(l.total_tokens)                    AS totalTokens,
+            SUM(l.cost)                            AS totalCost,
+            SUM(CASE WHEN l.status = 1 THEN 1 ELSE 0 END) AS successCount
+        FROM t_call_log l
+        JOIN t_user u ON l.user_id = u.id AND u.group_status = 0 AND u.deleted = 0
+        WHERE l.created_at >= DATE_SUB(CURDATE(), INTERVAL #{days} DAY)
+        GROUP BY DATE_FORMAT(l.created_at, '%Y-%m-%d')
+        ORDER BY statDate ASC
+    </select>
+
+    <!-- 清理旧日志 -->
+    <delete id="deleteBeforeDate">
+        DELETE FROM t_call_log WHERE created_at &lt; #{date}
+    </delete>
+
+    <!-- 用户各渠道费用分布（饼图） -->
+    <select id="selectUserChannelCost" resultType="java.util.LinkedHashMap">
+        SELECT
+            channel_id   AS channelId,
+            channel_name AS channelName,
+            IFNULL(ROUND(SUM(cost), 6), 0) AS totalCost
+        FROM t_call_log
+        WHERE user_id = #{userId}
+          AND status = 1
+          AND created_at >= DATE_SUB(CURDATE(), INTERVAL #{days} DAY)
+        GROUP BY channel_id, channel_name
+        ORDER BY totalCost DESC
+    </select>
+
+    <!-- 用户 Token/费用趋势（折线图） -->
+    <select id="selectUserTrend" resultType="java.util.LinkedHashMap">
+        SELECT
+            DATE_FORMAT(created_at, '%Y-%m-%d') AS statDate,
+            IFNULL(SUM(total_tokens), 0)        AS totalTokens,
+            IFNULL(ROUND(SUM(cost), 6), 0)      AS totalCost
+        FROM t_call_log
+        WHERE user_id = #{userId}
+          AND status = 1
+          AND created_at >= DATE_SUB(CURDATE(), INTERVAL #{days} DAY)
+        GROUP BY DATE_FORMAT(created_at, '%Y-%m-%d')
+        ORDER BY statDate ASC
+    </select>
+
+</mapper>
+
